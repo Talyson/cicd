@@ -88,6 +88,10 @@ sast-semgrep:
     name: semgrep/semgrep:1.184.0
     entrypoint: [""]
   needs: []
+  variables:
+    # A imagem do Semgrep espera o código em /src (fora do GitHub Actions);
+    # aponta para o diretório onde o GitLab clona o projeto.
+    SEMGREP_SRC_DIRECTORY: $CI_PROJECT_DIR
   script:
     - >-
       semgrep scan --config p/python --config p/flask --config p/secrets --metrics=off
