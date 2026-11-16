@@ -19,7 +19,7 @@ testpaths = ["tests"]
 addopts = "-ra"
 
 [tool.coverage.run]
-source = ["app"]
+source = ["app", "scripts"]
 branch = true
 
 [tool.coverage.report]
