@@ -194,3 +194,14 @@ def test_invalid_threshold(tmp_path):
         main(
             ["--reports-dir", str(tmp_path), "--target-branch", "main", "--critical-threshold", "0"]
         )
+
+
+def test_summary_file(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    reports = tmp_path / "r"
+    reports.mkdir()
+    _write_reports(reports)
+    out = tmp_path / "security-gate.md"
+    args = ["--reports-dir", str(reports), "--target-branch", "main", "--summary-file", str(out)]
+    assert main(args) == 0
+    assert "APROVADO" in out.read_text()

@@ -1,0 +1,64 @@
+# GitLab CE + GitLab Runner para laboratório local da esteira CI/CD.
+# Uso: veja infra/gitlab/setup.sh (sobe, configura projeto, runner e proteção da main).
+name: cicd-gitlab
+
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:19.5.5-ce.0
+    container_name: gitlab
+    hostname: gitlab
+    restart: unless-stopped
+    shm_size: 256m
+    ports:
+      - "8929:8929"   # web
+      - "2222:22"     # ssh (a 22 do host já está em uso)
+      - "5050:5050"   # container registry
+    environment:
+      GITLAB_ROOT_PASSWORD: ${GITLAB_ROOT_PASSWORD:?defina GITLAB_ROOT_PASSWORD no .env}
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://localhost:8929'
+        nginx['listen_port'] = 8929
+        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+        registry_external_url 'http://localhost:5050'
+        registry_nginx['listen_port'] = 5050
+        gitlab_rails['usage_ping_enabled'] = false
+        # Reduz consumo de memória no laboratório
+        prometheus_monitoring['enable'] = false
+        puma['worker_processes'] = 2
+        sidekiq['concurrency'] = 10
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-data:/var/opt/gitlab
+    networks:
+      - gitlab-net
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8929/-/readiness"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 300s
+
+  gitlab-runner:
+    image: gitlab/gitlab-runner:alpine-v19.5.3
+    container_name: gitlab-runner
+    restart: unless-stopped
+    depends_on:
+      gitlab:
+        condition: service_healthy
+    volumes:
+      # Docker executor usando o Docker do host (jobs rodam como containers irmãos)
+      - /var/run/docker.sock:/var/run/docker.sock
+      - gitlab-runner-config:/etc/gitlab-runner
+    networks:
+      - gitlab-net
+
+volumes:
+  gitlab-config:
+  gitlab-logs:
+  gitlab-data:
+  gitlab-runner-config:
+
+networks:
+  gitlab-net:
+    name: gitlab-net

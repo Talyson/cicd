@@ -218,6 +218,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reports-dir", type=Path, required=True)
     parser.add_argument("--target-branch", required=True)
     parser.add_argument("--critical-threshold", type=int, default=3)
+    parser.add_argument(
+        "--summary-file",
+        type=Path,
+        help="Arquivo para gravar o resumo em Markdown (ex.: artefato no GitLab CI)",
+    )
     args = parser.parse_args(argv)
 
     if args.critical_threshold < 1:
@@ -233,6 +238,9 @@ def main(argv: list[str] | None = None) -> int:
     summary = render_summary(decision, findings, args.target_branch)
     print(summary)
     emit_annotations(decision)
+
+    if args.summary_file:
+        args.summary_file.write_text(summary, encoding="utf-8")
 
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path:

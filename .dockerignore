@@ -10,3 +10,6 @@ __pycache__
 coverage.xml
 *.sarif
 tests
+.cache
+infra
+.gitlab-ci.yml

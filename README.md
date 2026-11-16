@@ -126,3 +126,48 @@ subprocess.call(request.args["cmd"], shell=True)
 Abra um PR para `test`: o `security-gate` (modo estrito) falha e o `Quality Gate` fica vermelho.
 Num PR para `main`, o merge só é bloqueado quando a soma de achados CRITICAL chega a 3; abaixo disso
 os achados aparecem como aviso no resumo do job.
+
+## GitLab (laboratório local)
+
+A mesma esteira existe para GitLab em `.gitlab-ci.yml`, rodando num **GitLab CE + GitLab Runner locais** via Docker Compose (`infra/gitlab/`).
+
+### Subir e configurar
+
+```bash
+./infra/gitlab/setup.sh
+```
+
+O script (idempotente):
+1. gera `infra/gitlab/.env` com a senha do root (não versionado) e sobe `gitlab` e `gitlab-runner`;
+2. cria um token de API do root, o projeto `root/cicd` e registra um runner **Docker executor** usando o socket do Docker do host;
+3. cadastra sua chave SSH, adiciona o remote `gitlab` (`ssh://git@localhost:2222/root/cicd.git`) e envia a branch atual como `main` e `test`;
+4. ativa **Pipelines must succeed** e protege a `main` (ninguém faz push direto; merge só via MR com pipeline verde).
+
+| Serviço | Endereço |
+|---------|----------|
+| GitLab | http://localhost:8929 (root / senha no `.env`) |
+| SSH | `localhost:2222` |
+| Container Registry | `localhost:5050` |
+
+### Equivalência entre as esteiras
+
+| GitHub Actions | GitLab CI |
+|----------------|-----------|
+| `lint`, `test` | `lint`, `test` (com relatório JUnit e cobertura no MR) |
+| `sast-bandit`, `sast-semgrep` | `sast-bandit`, `sast-semgrep` |
+| `sca-deps` (pip-audit + Trivy fs) | `sca-pip-audit`, `sca-trivy-fs` |
+| `build-image` (build + Trivy image) | `build-image`, `scan-image` |
+| `security-gate` | `security-gate` (mesmo `scripts/security_gate.py`; resumo exposto como artefato no MR) |
+| `quality-gate` + ruleset | pipeline falho + *Pipelines must succeed* + `main` protegida |
+| deploy GHCR | `deploy` no Container Registry do GitLab (só push na `main`) |
+
+A política é a mesma: MR para `main` bloqueia com **3 ou mais CRITICAL**; `test` é estrita.
+
+### Parar / remover
+
+```bash
+docker compose --project-directory infra/gitlab down        # para (mantém dados)
+docker compose --project-directory infra/gitlab down -v     # remove tudo, inclusive volumes
+```
+
+> O runner usa o socket do Docker do host: os jobs têm acesso total ao Docker da máquina. Adequado para laboratório local, não para runners compartilhados.

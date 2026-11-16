@@ -1,0 +1,181 @@
+# Esteira CI/CD equivalente a .github/workflows/ci.yml, para o GitLab CE local
+# (infra/gitlab). Runner: Docker executor com o socket do Docker do host.
+
+workflow:
+  rules:
+    # Pipelines de merge request
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    # Evita pipeline duplicado (branch + MR) quando já existe MR aberto
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "test"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+stages: [lint, test, scan, build, gate, deploy]
+
+variables:
+  # Política para a main: bloqueia a partir deste nº de achados CRITICAL (SAST + SCA)
+  CRITICAL_THRESHOLD: "3"
+  PYTHON_IMAGE: python:3.12-slim
+  TRIVY_IMAGE: aquasec/trivy:0.69.3
+  DOCKER_IMAGE: docker:29.10.0-cli
+  PIP_CACHE_DIR: $CI_PROJECT_DIR/.cache/pip
+  TRIVY_CACHE_DIR: $CI_PROJECT_DIR/.cache/trivy
+  # Imagem construída no Docker do host e compartilhada entre os jobs pelo socket
+  APP_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+
+.python:
+  image: $PYTHON_IMAGE
+  cache:
+    key:
+      files: [requirements-dev.txt]
+    paths: [.cache/pip]
+  before_script:
+    - pip install -q -r requirements-dev.txt
+
+.trivy:
+  image:
+    name: $TRIVY_IMAGE
+    entrypoint: [""]
+  cache:
+    key: trivy-db
+    paths: [.cache/trivy]
+
+# ------------------------------------------------------------------
+# Gate: lint e formatação
+# ------------------------------------------------------------------
+lint:
+  stage: lint
+  extends: .python
+  script:
+    - ruff check .
+    - ruff format --check .
+
+# ------------------------------------------------------------------
+# Gate: testes + cobertura mínima (80%)
+# ------------------------------------------------------------------
+test:
+  stage: test
+  extends: .python
+  needs: [lint]
+  script:
+    - pytest --cov --cov-report=xml --cov-report=term --cov-fail-under=80 --junitxml=report.xml
+  coverage: '/^TOTAL.*\s(\d+(?:\.\d+)?)%$/'
+  artifacts:
+    when: always
+    reports:
+      junit: report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+
+# ------------------------------------------------------------------
+# Scanners: só geram relatórios JSON; a decisão é do security-gate.
+# Falham apenas por erro da ferramenta.
+# ------------------------------------------------------------------
+sast-bandit:
+  stage: scan
+  extends: .python
+  needs: []
+  script:
+    - bandit -c pyproject.toml -r app scripts -f json -o bandit.json --exit-zero
+  artifacts:
+    paths: [bandit.json]
+
+sast-semgrep:
+  stage: scan
+  image:
+    name: semgrep/semgrep:1.184.0
+    entrypoint: [""]
+  needs: []
+  script:
+    - >-
+      semgrep scan --config p/python --config p/flask --config p/secrets --metrics=off
+      --json-output=semgrep.json
+  artifacts:
+    paths: [semgrep.json]
+
+sca-pip-audit:
+  stage: scan
+  image: $PYTHON_IMAGE
+  needs: []
+  script:
+    - pip install -q pip-audit==2.10.1
+    # Sai != 0 quando acha vulnerabilidades; o security-gate falha se o JSON não existir
+    - pip-audit -r requirements.txt --strict --format json --output pip-audit.json || true
+  artifacts:
+    paths: [pip-audit.json]
+
+sca-trivy-fs:
+  stage: scan
+  extends: .trivy
+  needs: []
+  script:
+    - trivy fs --scanners vuln,secret --skip-dirs .cache --format table .
+    - >-
+      trivy fs --scanners vuln,secret --skip-dirs .cache --severity HIGH,CRITICAL
+      --ignore-unfixed --format json --output trivy-fs.json .
+  artifacts:
+    paths: [trivy-fs.json]
+
+# ------------------------------------------------------------------
+# Build da imagem + SCA da imagem
+# ------------------------------------------------------------------
+build-image:
+  stage: build
+  image: $DOCKER_IMAGE
+  needs: [test]
+  script:
+    - docker build --pull -t "$APP_IMAGE" .
+
+scan-image:
+  stage: build
+  extends: .trivy
+  needs: [build-image]
+  script:
+    - trivy image --format table "$APP_IMAGE"
+    - >-
+      trivy image --severity HIGH,CRITICAL --ignore-unfixed
+      --format json --output trivy-image.json "$APP_IMAGE"
+  artifacts:
+    paths: [trivy-image.json]
+
+# ------------------------------------------------------------------
+# Gate: política de vulnerabilidades (SAST + SCA)
+#   main -> bloqueia com >= CRITICAL_THRESHOLD achados CRITICAL; o resto é aviso
+#   test -> estrito: qualquer HIGH/CRITICAL bloqueia
+# ------------------------------------------------------------------
+security-gate:
+  stage: gate
+  image: $PYTHON_IMAGE
+  needs: [sast-bandit, sast-semgrep, sca-pip-audit, sca-trivy-fs, scan-image]
+  script:
+    - TARGET_BRANCH="${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-$CI_COMMIT_BRANCH}"
+    - mkdir -p reports
+    - cp bandit.json semgrep.json pip-audit.json trivy-fs.json trivy-image.json reports/
+    - >-
+      python scripts/security_gate.py --reports-dir reports
+      --target-branch "$TARGET_BRANCH"
+      --critical-threshold "$CRITICAL_THRESHOLD"
+      --summary-file security-gate.md
+  artifacts:
+    when: always
+    expose_as: Security Gate
+    paths: [security-gate.md]
+
+# ------------------------------------------------------------------
+# Deploy no Container Registry do GitLab (somente push na main).
+# Sem `needs`: só roda depois que todos os stages anteriores passaram.
+# ------------------------------------------------------------------
+deploy:
+  stage: deploy
+  image: $DOCKER_IMAGE
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
+  environment:
+    name: production
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker tag "$APP_IMAGE" "$CI_REGISTRY_IMAGE:latest"
+    - docker push "$APP_IMAGE"
+    - docker push "$CI_REGISTRY_IMAGE:latest"

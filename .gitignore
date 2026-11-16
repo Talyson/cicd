@@ -225,3 +225,6 @@ __marimo__/
 # Relatórios de segurança gerados localmente
 reports/
 *.sarif
+
+# Segredos do GitLab local
+infra/gitlab/.env
