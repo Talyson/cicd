@@ -57,7 +57,7 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - name: pytest (falha se cobertura < 80%)
         run: pytest --cov --cov-report=xml --cov-report=term-missing --cov-fail-under=80
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage-report
@@ -91,7 +91,7 @@ jobs:
         with:
           sarif_file: bandit.sarif
           category: bandit
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: report-bandit
           path: bandit.json
@@ -116,7 +116,7 @@ jobs:
         with:
           sarif_file: semgrep.sarif
           category: semgrep
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: report-semgrep
           path: semgrep.json
@@ -162,7 +162,7 @@ jobs:
           ignore-unfixed: true
           format: json
           output: trivy-fs.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: report-sca-deps
           path: |
@@ -205,11 +205,11 @@ jobs:
           ignore-unfixed: true
           format: json
           output: trivy-image.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: report-trivy-image
           path: trivy-image.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: docker-image
           path: /tmp/image.tar
