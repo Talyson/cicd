@@ -5,6 +5,7 @@ import secrets
 
 from flask import Flask
 
+from app.admin import admin_bp
 from app.models import TaskStore
 from app.routes import bp
 
@@ -18,4 +19,5 @@ def create_app(config: dict | None = None) -> Flask:
 
     app.extensions["task_store"] = TaskStore()
     app.register_blueprint(bp)
+    app.register_blueprint(admin_bp)
     return app
